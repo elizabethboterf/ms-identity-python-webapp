@@ -1,7 +1,7 @@
 import identity
 import identity.web
 import requests
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, redirect, render_template, request, session, url_for, jsonify
 from flask_session import Session
 
 import app_config
@@ -24,52 +24,79 @@ auth = identity.web.Auth(
     client_credential=app.config["CLIENT_SECRET"],
 )
 
+def get_graph_token(user_token):
+    token_endpoint = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+    params = {
+        'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        'assertion': user_token,
+        'requested_token_use': 'on_behalf_of',
+        'scope': 'https://graph.microsoft.com/.default https://graph.microsoft.com/mail.readwrite https://graph.microsoft.com/mail.send',
+        'client_id': client_id,
+        'client_secret': client_secret
+    }
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
 
-@app.route("/login")
-def login():
-    return render_template("login.html", version=identity.__version__, **auth.log_in(
-        scopes=app_config.SCOPE, # Have user consent to scopes during log-in
-        redirect_uri=url_for("auth_response", _external=True), # Optional. If present, this absolute URL must match your app's redirect_uri registered in Azure Portal
-        ))
+    response = requests.post(token_endpoint, data=params, headers=headers)
+    print(response.json())
+    return response.json().get('access_token')
 
-
-@app.route(app_config.REDIRECT_PATH)
-def auth_response():
-    result = auth.complete_log_in(request.args)
-    if "error" in result:
-        return render_template("auth_error.html", result=result)
-    return redirect(url_for("index"))
-
-
-@app.route("/logout")
-def logout():
-    return redirect(auth.log_out(url_for("index", _external=True)))
-
-
-@app.route("/")
-def index():
-    if not (app.config["CLIENT_ID"] and app.config["CLIENT_SECRET"]):
-        # This check is not strictly necessary.
-        # You can remove this check from your production code.
-        return render_template('config_error.html')
-    if not auth.get_user():
-        return redirect(url_for("login"))
-    return render_template('index.html', user=auth.get_user(), version=identity.__version__)
+@app.route('/auth/exchangetoken', methods=['POST'])
+def exchange_token():
+    auth_header = request.headers.get('Authorization')
+    if auth_header:
+        user_token = auth_header.split(" ")[1]
+    else:
+        return jsonify({error: 'No Authorization header provided'}), 400
+    graph_token = get_graph_token(user_token)
 
 
-@app.route("/call_downstream_api")
-def call_downstream_api():
-    token = auth.get_token_for_user(app_config.SCOPE)
-    if "error" in token:
-        return redirect(url_for("login"))
-    # Use access token to call downstream api
-    api_result = requests.get(
-        app_config.ENDPOINT,
-        headers={'Authorization': 'Bearer ' + token['access_token']},
-        timeout=30,
-    ).json()
-    return render_template('display.html', result=api_result)
+# @app.route("/login")
+# def login():
+#     return render_template("login.html", version=identity.__version__, **auth.log_in(
+#         scopes=app_config.SCOPE, # Have user consent to scopes during log-in
+#         redirect_uri=url_for("auth_response", _external=True), # Optional. If present, this absolute URL must match your app's redirect_uri registered in Azure Portal
+#         ))
+
+
+# @app.route(app_config.REDIRECT_PATH)
+# def auth_response():
+#     result = auth.complete_log_in(request.args)
+#     if "error" in result:
+#         return render_template("auth_error.html", result=result)
+#     return redirect(url_for("index"))
+
+
+# @app.route("/logout")
+# def logout():
+#     return redirect(auth.log_out(url_for("index", _external=True)))
+
+
+# @app.route("/")
+# def index():
+#     if not (app.config["CLIENT_ID"] and app.config["CLIENT_SECRET"]):
+#         # This check is not strictly necessary.
+#         # You can remove this check from your production code.
+#         return render_template('config_error.html')
+#     if not auth.get_user():
+#         return redirect(url_for("login"))
+#     return render_template('index.html', user=auth.get_user(), version=identity.__version__)
+
+
+# @app.route("/call_downstream_api")
+# def call_downstream_api():
+#     token = auth.get_token_for_user(app_config.SCOPE)
+#     if "error" in token:
+#         return redirect(url_for("login"))
+#     # Use access token to call downstream api
+#     api_result = requests.get(
+#         app_config.ENDPOINT,
+#         headers={'Authorization': 'Bearer ' + token['access_token']},
+#         timeout=30,
+#     ).json()
+#     return render_template('display.html', result=api_result)
 
 
 if __name__ == "__main__":
-    app.run()
+    app.run(port=5000)
